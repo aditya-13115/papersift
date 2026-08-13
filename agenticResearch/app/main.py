@@ -1,13 +1,18 @@
 import os
 from dotenv import load_dotenv
+from fastapi.responses import JSONResponse
 from groq import AsyncGroq
 import groq
 import asyncio
 import random
 from time import perf_counter
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
 
 app = FastAPI()
+
+class GenerateRequest(BaseModel):
+    prompt: str
 
 load_dotenv()
 api_key = os.getenv("GROQ_API_KEY")
@@ -56,7 +61,7 @@ class AsyncLLMClient():
 
     async def generate(self, prompt: str):
         try:
-            async with asyncio.timeout(4):
+            async with asyncio.timeout(10):
                 
                 for attempt in range(1,MAX_ATTEMPTS + 1):
                     try:
@@ -99,11 +104,94 @@ class AsyncLLMClient():
             raise                    
 
 
-async def main():
+@app.exception_handler(TimeoutError)
+async def timeout_exception_handler(request: Request, exc: TimeoutError):
+    return JSONResponse(
+        status_code=504,
+        content={"detail": "LLM request timed out"}
+    )
+
+
+@app.exception_handler(groq.BadRequestError)
+async def bad_request_handler(request: Request, exc: groq.BadRequestError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": "Invalid LLM request"}
+    )
+
+
+@app.exception_handler(groq.AuthenticationError)
+async def authentication_handler(request: Request, exc: groq.AuthenticationError):
+    return JSONResponse(
+        status_code=401,
+        content={"detail": "LLM authentication failed"}
+    )
+
+
+@app.exception_handler(groq.PermissionDeniedError)
+async def permission_handler(request: Request, exc: groq.PermissionDeniedError):
+    return JSONResponse(
+        status_code=403,
+        content={"detail": "LLM request forbidden"}
+    )
+
+
+@app.exception_handler(groq.NotFoundError)
+async def not_found_handler(request: Request, exc: groq.NotFoundError):
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "LLM model not found"}
+    )
+
+
+@app.exception_handler(groq.RateLimitError)
+async def rate_limit_handler(request: Request, exc: groq.RateLimitError):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "LLM rate limit exceeded"}
+    )
+
+
+@app.exception_handler(groq.InternalServerError)
+async def server_error_handler(request: Request, exc: groq.InternalServerError):
+    return JSONResponse(
+        status_code=502,
+        content={"detail": "LLM provider temporarily unavailable"}
+    )
+
+@app.exception_handler(groq.APIConnectionError)
+async def connection_error_handler(request: Request, exc: groq.APIConnectionError):
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Unable to connect to LLM provider"}
+    )
+
+
+@app.exception_handler(groq.APITimeoutError)
+async def api_timeout_handler(request: Request, exc: groq.APITimeoutError):
+    return JSONResponse(
+        status_code=504,
+        content={"detail": "LLM provider request timed out"}
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
+
+
+@app.post("/generate")
+async def generate_endpoint(request: GenerateRequest):
+    start_time = perf_counter()
+
     client = AsyncLLMClient(model="groq/compound")
+    result = await client.generate(request.prompt)
 
-    result = await client.generate("Explain asyncio in simple terms")
-    print(result)
+    latency = perf_counter() - start_time
 
-
-asyncio.run(main())
+    return {
+        "result": result,
+        "latency": latency
+    }
