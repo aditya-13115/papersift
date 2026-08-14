@@ -253,8 +253,24 @@ async def stream(request: GenerateRequest) -> AsyncIterable[ServerSentEvent]:
     start_time = perf_counter()
 
     client = AsyncLLMClient(model="llama-3.1-8b-instant",streaming=True, max_completion_tokens=256)  # You can adjust the model and parameters as needed
-    async for token in client.stream(request.prompt):
-        yield ServerSentEvent(data=token,event="token")
+    completed = False
+    try:
+            async for token in client.stream(request.prompt):
+                yield ServerSentEvent(data=token,event="token")
+            completed = True
+    
+    except groq.RateLimitError:
+        yield ServerSentEvent(data="LLM rate limit exceeded",event="error")
 
-    latency = perf_counter() - start_time
-    yield ServerSentEvent(data=f"Latency: {latency:.2f} seconds", event="latency")
+    except groq.APIConnectionError:
+        yield ServerSentEvent(data="Unable to connect to LLM provider",event="error")
+
+    except groq.InternalServerError:
+        yield ServerSentEvent(data="LLM provider temporarily unavailable",event="error")
+
+    except Exception:
+        yield ServerSentEvent(data="Internal streaming error",event="error")
+
+    finally:
+        if completed:
+            yield ServerSentEvent(raw_data="[DONE]",event="done")
