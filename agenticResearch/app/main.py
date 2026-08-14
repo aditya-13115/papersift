@@ -7,6 +7,7 @@ import asyncio
 import random
 from time import perf_counter
 from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 app = FastAPI()
@@ -195,3 +196,12 @@ async def generate_endpoint(request: GenerateRequest):
         "result": result,
         "latency": latency
     }
+
+async def generatorrr():
+    for i in range(5):
+        await asyncio.sleep(1)
+        yield i
+
+@app.get("/stream",response_class=StreamingResponse)
+async def stream():
+    return StreamingResponse(generatorrr())
