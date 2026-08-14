@@ -42,10 +42,11 @@ RETRYABLE_ERRORS = (
 )
 
 class AsyncLLMClient():
-    def __init__(self, model: str, temperature: float = 0.95, max_completion_tokens: int = 1024):
+    def __init__(self, model: str, temperature: float = 0.95, max_completion_tokens: int = 1024, streaming: bool = False):
         self.model = model
         self.temperature = temperature
         self.max_completion_tokens = max_completion_tokens
+        self.streaming = streaming
         self.client = AsyncGroq(api_key=api_key,max_retries=0) # we are diasbling the built-in retry mechanism to implement our own with exponential backoff and jitter
 
     def _calculate_backoff(self, attempt: int) -> float:
@@ -62,13 +63,13 @@ class AsyncLLMClient():
         # All other retryable errors, or 429 without Retry-After
         return self._calculate_backoff(attempt)
 
-    async def generate(self, prompt: str):
+    async def stream(self, prompt: str):
         try:
             async with asyncio.timeout(10):
                 
                 for attempt in range(1,MAX_ATTEMPTS + 1):
                     try:
-                        chat_completion = await self.client.chat.completions.create( 
+                        stream = await self.client.chat.completions.create( 
                                 messages=[
                                     
                                     {
@@ -81,9 +82,14 @@ class AsyncLLMClient():
                                         "content": prompt,
                                     }
                                 ],
-                                model=self.model, temperature=self.temperature, max_completion_tokens=self.max_completion_tokens)
+                                model=self.model, temperature=self.temperature, max_completion_tokens=self.max_completion_tokens,stream=self.streaming)
                         
-                        return chat_completion.choices[0].message.content
+                        async for chunk in stream:
+                            content = chunk.choices[0].delta.content
+
+                            if content:
+                                yield content
+                        return
 
                     except NON_RETRYABLE_ERRORS as e:
                         print(type(e).__name__)
@@ -104,7 +110,51 @@ class AsyncLLMClient():
                         raise    
         except TimeoutError:
             print("Request timed out.")
-            raise                    
+            raise
+
+    async def generate(self, prompt: str):
+            try:
+                async with asyncio.timeout(10):
+                    
+                    for attempt in range(1,MAX_ATTEMPTS + 1):
+                        try:
+                            chat_completion = await self.client.chat.completions.create( 
+                                    messages=[
+                                        
+                                        {
+                                            "role": "system",
+                                            "content": "You are a helpful assistant."
+                                        },
+                                        
+                                        {
+                                            "role": "user",
+                                            "content": prompt,
+                                        }
+                                    ],
+                                    model=self.model, temperature=self.temperature, max_completion_tokens=self.max_completion_tokens,streaming=False)
+                            
+                            return chat_completion.choices[0].message.content
+    
+                        except NON_RETRYABLE_ERRORS as e:
+                            print(type(e).__name__)
+                            print("Non-retryable error.")
+                            raise
+    
+                        except RETRYABLE_ERRORS as e:
+    
+                            if attempt == MAX_ATTEMPTS:
+                                raise
+                            delay = self._get_retry_delay(e, attempt)  
+                            print(f"Retryable error. Retrying in {delay:.2f}s...")
+                            await asyncio.sleep(delay)
+    
+                        except Exception as e:
+                            print(type(e).__name__)
+                            print("Unexpected error.")
+                            raise    
+            except TimeoutError:
+                print("Request timed out.")
+                raise                    
 
 
 @app.exception_handler(TimeoutError)
@@ -169,7 +219,6 @@ async def connection_error_handler(request: Request, exc: groq.APIConnectionErro
         content={"detail": "Unable to connect to LLM provider"}
     )
 
-
 @app.exception_handler(groq.APITimeoutError)
 async def api_timeout_handler(request: Request, exc: groq.APITimeoutError):
     return JSONResponse(
@@ -189,24 +238,23 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def generate_endpoint(request: GenerateRequest):
     start_time = perf_counter()
 
-    client = AsyncLLMClient(model="groq/compound")
+    client = AsyncLLMClient(model="llama-3.1-8b-instant", max_completion_tokens=256)  # You can adjust the model and parameters as needed
     result = await client.generate(request.prompt)
 
     latency = perf_counter() - start_time
 
     return {
-        "result": result,
-        "latency": latency
+        "result": result, "latency": latency
     }
 
 
-@app.get("/stream", response_class=EventSourceResponse)
-async def stream() -> AsyncIterable[ServerSentEvent]:
-    for i in range(5):
-        await asyncio.sleep(1)
+@app.post("/stream", response_class=EventSourceResponse)
+async def stream(request: GenerateRequest) -> AsyncIterable[ServerSentEvent]:
+    start_time = perf_counter()
 
-        yield ServerSentEvent(
-            data=i,
-            event="token",
-            id=str(i)
-        )
+    client = AsyncLLMClient(model="llama-3.1-8b-instant",streaming=True, max_completion_tokens=256)  # You can adjust the model and parameters as needed
+    async for token in client.stream(request.prompt):
+        yield ServerSentEvent(data=token,event="token")
+
+    latency = perf_counter() - start_time
+    yield ServerSentEvent(data=f"Latency: {latency:.2f} seconds", event="latency")
