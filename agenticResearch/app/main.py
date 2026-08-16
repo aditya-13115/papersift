@@ -11,10 +11,11 @@ from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from collections.abc import AsyncIterable
+from model_router import SemanticRouter
 
 
 semaphore = asyncio.Semaphore(10)
-
+router = SemanticRouter()
 app = FastAPI()
 
 class GenerateRequest(BaseModel):
@@ -346,22 +347,22 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.post("/generate")
 async def generate_endpoint(request: GenerateRequest):
     start_time = perf_counter()
-
-    client = AsyncLLMClient(model="llama-3.1-8b-instant", max_completion_tokens=256)  # You can adjust the model and parameters as needed
+    model = router.route(request.prompt)
+    client = AsyncLLMClient(model=model, max_completion_tokens=256)  # You can adjust the model and parameters as needed
     result = await client.generate(request.prompt)
 
     latency = perf_counter() - start_time
 
     return {
-        "result": result, "latency": latency
+        "result": result, "latency": latency, "model": model
     }
 
 
 @app.post("/stream", response_class=EventSourceResponse)
 async def stream(request: GenerateRequest) -> AsyncIterable[ServerSentEvent]:
     start_time = perf_counter()
-
-    client = AsyncLLMClient(model="llama-3.1-8b-instant",streaming=True, max_completion_tokens=256)  # You can adjust the model and parameters as needed
+    model = router.route(request.prompt)
+    client = AsyncLLMClient(model=model, streaming=True, max_completion_tokens=256)  # You can adjust the model and parameters as needed
     completed = False
     try:
             async for token in client.stream(request.prompt):
@@ -386,5 +387,9 @@ async def stream(request: GenerateRequest) -> AsyncIterable[ServerSentEvent]:
 
     finally:
         if completed:
-            yield ServerSentEvent(raw_data="[DONE]",event="done")
+            latency = perf_counter() - start_time
+
+        yield ServerSentEvent(data=str(latency),event="latency")
+        yield ServerSentEvent(data=model, event="model")
+        yield ServerSentEvent(raw_data="[DONE]",event="done")
         print("Stream cleanup complete.")
