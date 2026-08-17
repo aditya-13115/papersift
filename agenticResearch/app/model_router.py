@@ -7,6 +7,8 @@ class SemanticRouter:
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
         self.cheap = "llama-3.1-8b-instant"
         self.strong = "llama-3.3-70b-versatile"
+        self.threshold = 0.70
+        self.fallback = self.cheap
 
         self.routes = {
         "cheap": [
@@ -54,8 +56,13 @@ class SemanticRouter:
             if score > best_score:
                 best_score = score
                 best_tier = tier
+    
+        if best_score >= self.threshold:
+            return self.cheap if best_tier == "cheap" else self.strong
 
-        return self.cheap if best_tier == "cheap" else self.strong
+        return self.cheap   # fallback
+
+    
 
 
 if __name__ == "__main__":
