@@ -13,11 +13,14 @@ from pydantic import BaseModel
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from collections.abc import AsyncIterable
 from model_router import SemanticRouter
+from metrics import MetricsStore
 
 
+app = FastAPI()
+metrics_store = MetricsStore(max_size=1000)
 semaphore = asyncio.Semaphore(10)
 router = SemanticRouter()
-app = FastAPI()
+
 
 PRICING = { # pricing are $ per 1M tokens.
     "openai/gpt-oss-20b": {
@@ -275,7 +278,7 @@ class AsyncLLMClient():
 
                     except Exception as e:
                         print(type(e).__name__)
-                        print("Unexpected error.")
+                        print(f"Unexpected error: {e}")
                         traceback.print_exc()
                         raise
 
@@ -403,6 +406,15 @@ async def generate_endpoint(request: GenerateRequest):
         "cost": cost,
         "output_tokens_per_second": output_tokens_per_second,
     }
+    # Store request metrics for /metrics endpoint
+    metrics_store.record({
+        "model": model,
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "total_tokens": usage.total_tokens,
+        "latency": latency,
+        "cost": cost,
+    })
 
     return {
         "result": response["text"],
@@ -464,6 +476,17 @@ async def stream_endpoint(request: GenerateRequest) -> AsyncIterable[ServerSentE
                     "cost": cost,
                     "output_tokens_per_second": output_tokens_per_second,
                 }
+
+                # Store streaming request metrics for /metrics endpoint
+                metrics_store.record({
+                    "model": model,
+                    "prompt_tokens": usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "total_tokens": usage.total_tokens,
+                    "latency": latency,
+                    "cost": cost,
+                })
+
                 yield ServerSentEvent(
                     data=str(metadata),
                     event="metadata"
@@ -473,3 +496,14 @@ async def stream_endpoint(request: GenerateRequest) -> AsyncIterable[ServerSentE
         yield ServerSentEvent(data=model, event="model")
         yield ServerSentEvent(raw_data="[DONE]",event="done")
         print("Stream cleanup complete.")
+
+
+@app.get("/metrics")
+async def metrics():
+    return metrics_store.summary()
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy"
+    }
