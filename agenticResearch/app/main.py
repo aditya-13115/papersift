@@ -1,4 +1,5 @@
 import os
+import traceback
 from dotenv import load_dotenv
 from fastapi.responses import JSONResponse
 from groq import AsyncGroq
@@ -17,6 +18,19 @@ from model_router import SemanticRouter
 semaphore = asyncio.Semaphore(10)
 router = SemanticRouter()
 app = FastAPI()
+
+PRICING = { # pricing are $ per 1M tokens.
+    "openai/gpt-oss-20b": {
+        "input": 0.075,
+        "output": 0.30
+    },
+
+    "openai/gpt-oss-120b": {
+        "input": 0.15,
+        "output": 0.60
+    }
+}
+
 
 class GenerateRequest(BaseModel):
     prompt: str
@@ -81,11 +95,12 @@ class CircuitBreaker:
 circuit = CircuitBreaker(failure_threshold=5,recovery_timeout=30)
 
 class AsyncLLMClient():
-    def __init__(self, model: str, temperature: float = 0.95, max_completion_tokens: int = 1024, streaming: bool = False):
+    def __init__(self, model: str, temperature: float = 0.95, max_completion_tokens: int = 1024, streaming: bool = True):
         self.model = model
         self.temperature = temperature
         self.max_completion_tokens = max_completion_tokens
         self.streaming = streaming
+        self.last_usage = None
         self.client = AsyncGroq(api_key=api_key,max_retries=0) # we are diasbling the built-in retry mechanism to implement our own with exponential backoff and jitter
 
     def _calculate_backoff(self, attempt: int) -> float:
@@ -103,6 +118,7 @@ class AsyncLLMClient():
         return self._calculate_backoff(attempt)
 
     async def stream(self, prompt: str):
+        self.last_usage = None # reset last_usage before every stream
         semaphore_acquired = False
 
         await circuit.before_call()
@@ -132,14 +148,18 @@ class AsyncLLMClient():
                             model=self.model,
                             temperature=self.temperature,
                             max_completion_tokens=self.max_completion_tokens,
-                            stream=self.streaming
+                            stream=self.streaming,
                         )
 
                         async for chunk in stream:
-                            content = chunk.choices[0].delta.content
+                            if chunk.choices:
+                                content = chunk.choices[0].delta.content
 
-                            if content:
-                                yield content
+                                if content:
+                                    yield content
+
+                            if chunk.usage is not None:
+                                self.last_usage = chunk.usage
 
                         # Entire stream completed successfully
                         circuit.record_success()
@@ -173,7 +193,8 @@ class AsyncLLMClient():
 
                     except Exception as e:
                         print(type(e).__name__)
-                        print("Unexpected error.")
+                        print(f"Unexpected error: {e}")
+                        traceback.print_exc()
                         raise
 
         except asyncio.TimeoutError:
@@ -226,7 +247,10 @@ class AsyncLLMClient():
                         # SUCCESS
                         circuit.record_success()
 
-                        return chat_completion.choices[0].message.content
+                        return {
+                        "text": chat_completion.choices[0].message.content,
+                        "usage": chat_completion.usage
+                    }
 
                     except NON_RETRYABLE_ERRORS as e:
                         print(type(e).__name__)
@@ -252,6 +276,7 @@ class AsyncLLMClient():
                     except Exception as e:
                         print(type(e).__name__)
                         print("Unexpected error.")
+                        traceback.print_exc()
                         raise
 
         except asyncio.TimeoutError:
@@ -348,20 +373,50 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def generate_endpoint(request: GenerateRequest):
     start_time = perf_counter()
     model = router.route(request.prompt)
+    print(f"ROUTED MODEL: {model}")
     client = AsyncLLMClient(model=model, max_completion_tokens=256)  # You can adjust the model and parameters as needed
-    result = await client.generate(request.prompt)
+    response = await client.generate(request.prompt)
 
     latency = perf_counter() - start_time
 
+    usage = response["usage"]
+
+
+    output_tokens_per_second = (usage.completion_tokens / usage.completion_time 
+                                if usage.completion_time > 0
+                                else 0)
+    cost = (
+        usage.prompt_tokens / 1_000_000 * PRICING[model]["input"]
+        + usage.completion_tokens / 1_000_000 * PRICING[model]["output"]
+    )
+
+    metadata = {
+        "model": model,
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "total_tokens": usage.total_tokens,
+
+        "queue_time": usage.queue_time,
+        "prompt_time": usage.prompt_time,
+        "completion_time": usage.completion_time,
+        "total_time": usage.total_time,
+        "cost": cost,
+        "output_tokens_per_second": output_tokens_per_second,
+    }
+
     return {
-        "result": result, "latency": latency, "model": model
+        "result": response["text"],
+        "latency": latency,
+        "model": model,
+        "metadata": metadata
     }
 
 
 @app.post("/stream", response_class=EventSourceResponse)
-async def stream(request: GenerateRequest) -> AsyncIterable[ServerSentEvent]:
+async def stream_endpoint(request: GenerateRequest) -> AsyncIterable[ServerSentEvent]:
     start_time = perf_counter()
     model = router.route(request.prompt)
+    print(f"ROUTED MODEL: {model}")
     client = AsyncLLMClient(model=model, streaming=True, max_completion_tokens=256)  # You can adjust the model and parameters as needed
     completed = False
     try:
@@ -388,8 +443,33 @@ async def stream(request: GenerateRequest) -> AsyncIterable[ServerSentEvent]:
     finally:
         if completed:
             latency = perf_counter() - start_time
-
-        yield ServerSentEvent(data=str(latency),event="latency")
+            usage = client.last_usage
+            if usage is not None:
+                output_tokens_per_second = (usage.completion_tokens / usage.completion_time 
+                                            if usage.completion_time > 0
+                                            else 0)
+                cost = (
+                    usage.prompt_tokens / 1_000_000 * PRICING[model]["input"]
+                    + usage.completion_tokens / 1_000_000 * PRICING[model]["output"]
+                )
+                metadata = {
+                    "model": model,
+                    "prompt_tokens": usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "total_tokens": usage.total_tokens,
+                    "queue_time": usage.queue_time,
+                    "prompt_time": usage.prompt_time,
+                    "completion_time": usage.completion_time,
+                    "total_time": usage.total_time,
+                    "cost": cost,
+                    "output_tokens_per_second": output_tokens_per_second,
+                }
+                yield ServerSentEvent(
+                    data=str(metadata),
+                    event="metadata"
+                )
+                yield ServerSentEvent(data=str(latency),event="latency")
+        
         yield ServerSentEvent(data=model, event="model")
         yield ServerSentEvent(raw_data="[DONE]",event="done")
         print("Stream cleanup complete.")
