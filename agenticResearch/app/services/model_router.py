@@ -80,12 +80,73 @@ class SemanticRouter:
 
 if __name__ == "__main__":
     router = SemanticRouter()
+'''
+    tasks = [
+        # -------------------------
+        # Cheap / simple
+        # -------------------------
+        "Summarize this research paper",
+        "Give me a short summary of this document",
+        "Translate this paragraph to Hindi",
+        "Translate this email into Spanish",
+        "Extract the names from this document",
+        "Extract all dates and locations from this report",
+        "Format this text as a clean Markdown document",
+        "Rewrite this paragraph to sound more professional",
+        "What is the capital of France?",
+        "Convert this list into JSON",
+        "Summarize the key points from this meeting",
+        "Explain this error message in simple terms",
+        "Create a basic HTML page for a portfolio",
+        "Write a simple Python script to rename files",
 
-    task = """
+        # -------------------------
+        # Strong / complex
+        # -------------------------
+        "Analyze the methodology of this research paper",
+        "Identify weaknesses in this research methodology",
+        "Compare the experimental design of these two papers",
+        "Critically evaluate the claims made in this research paper",
+        "Develop a detailed Python implementation of a distributed task scheduler",
+        "Debug this asynchronous Python application",
+        "Find the root cause of this race condition",
+        "Design an efficient algorithm for this optimization problem",
+        "Reason through this system architecture and propose a scalable redesign",
+        "Analyze these experimental results and identify confounding factors",
+        "Design a production-ready FastAPI service with retries and circuit breakers",
+        "Analyze this code for performance bottlenecks and concurrency bugs",
+        "Design a scalable distributed system for millions of users",
+        "Design a robust agentic system with dynamic tool discovery",
+        "Evaluate whether the conclusions of this machine learning experiment are justified",
+        "Design a scalable full-stack architecture for a high-traffic application",
+        "Solve this complex multi-step programming problem",
+        "Design an architecture for a fault-tolerant backend system",
+
+        # -------------------------
+        # Boundary / ambiguous
+        # -------------------------
+        "Explain this research paper in simple terms",
+        "Explain why the methodology of this paper may be flawed",
+        "Write a Python program to implement binary search",
+        "Write a Python program for a concurrent pipeline",
+        "Summarize this code and explain what it does",
+        "Analyze this code and suggest improvements",
+        "Give me an overview of this machine learning paper",
+        "Evaluate this machine learning paper",
+        "Help me understand this production error",
+        "Find the root cause of this production failure",
+        "Create a portfolio website",
+        "Design a scalable architecture for a portfolio website",
+    ]
+    '''
+task = """
     Design a fault-tolerant distributed architecture for an AI system
     serving millions of concurrent users. Analyze bottlenecks, failure
     modes, retries, circuit breakers, caching, load balancing, and
     trade-offs between latency, reliability, cost, and consistency.
     """
-
-    print(router.route(task))
+print(router.route(task))
+'''
+    for task in tasks:
+        print(f"{task} → {router.route(task)}")
+        '''
