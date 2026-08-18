@@ -1,10 +1,13 @@
 import pandas as pd
-from model_router import SemanticRouter
+from app.services.model_router import SemanticRouter
+from pathlib import Path
+
 
 router = SemanticRouter()
 
 # Load evaluation dataset
-CSV_PATH = r"D:\CODIN PLAYGROUND\ML-AI\research-Agent\agenticResearch\app\model_routing_eval_dataset.csv"
+BASE_DIR = Path(__file__).resolve().parent
+CSV_PATH = BASE_DIR / "model_routing_eval_dataset.csv"
 
 df = pd.read_csv(CSV_PATH)
 

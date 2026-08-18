@@ -1,4 +1,4 @@
-from main import CircuitBreaker
+from app.services.circuit_breaker import CircuitBreaker
 import asyncio
 
 
