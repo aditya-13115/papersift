@@ -64,7 +64,7 @@ for name, tool in tools.items():
         },
     })
 
-
+print("llm_tools = ", llm_tools)
 # -----------------------------
 # 4. Ask the LLM
 # -----------------------------
@@ -85,7 +85,7 @@ response = client.chat.completions.create(
 
 message = response.choices[0].message
 
-print(message)
+print("message = ",message)
 # -----------------------------
 # 5. Check whether LLM wants a tool
 # -----------------------------
@@ -136,3 +136,8 @@ final_response = client.chat.completions.create(
 )
 
 print(final_response.choices[0].message.content)
+
+
+
+class ToolResult(BaseModel):
+    pass

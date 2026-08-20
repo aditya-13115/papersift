@@ -9,6 +9,7 @@ dependencies = [
     "fastapi[standard]>=0.141.1",
     "groq>=1.6.0",
     "pandas>=3.0.5",
+    "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
     "sentence-transformers>=5.7.0",
     "uvicorn>=0.52.1",
