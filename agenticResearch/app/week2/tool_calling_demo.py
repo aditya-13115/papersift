@@ -357,4 +357,98 @@ async def main():
     print(result)
 
 
+# asyncio.run(main())
+
+
+
+class ConcurrencyTool(BaseTool):
+
+    name = "concurrency_test"
+
+    description = "Used to test semaphore concurrency."
+
+    args_schema = WeatherArgs
+
+    # Number of tools currently executing
+    active = 0
+
+    # Maximum active tools observed
+    max_active = 0
+
+    async def _execute(self, arguments: WeatherArgs):
+
+        ConcurrencyTool.active += 1
+
+        ConcurrencyTool.max_active = max(
+            ConcurrencyTool.max_active,
+            ConcurrencyTool.active
+        )
+
+        logger.info(
+            "EXECUTING | city=%s | active=%d",
+            arguments.city,
+            ConcurrencyTool.active
+        )
+
+        # Simulate a slow tool
+        await asyncio.sleep(3)
+
+        ConcurrencyTool.active -= 1
+
+        logger.info(
+            "FINISHED | city=%s | active=%d",
+            arguments.city,
+            ConcurrencyTool.active
+        )
+
+        return arguments.city
+
+
+# ============================================================
+# 5. Concurrency Test
+# ============================================================
+
+async def main():
+
+    tool = ConcurrencyTool()
+
+    start = time.perf_counter()
+
+    # Launch 10 tool calls simultaneously
+    tasks = [
+        tool.run({
+            "city": f"City-{i}"
+        })
+        for i in range(10)
+    ]
+
+    results = await asyncio.gather(*tasks)
+
+    total_time = round(
+        (time.perf_counter() - start),
+        2
+    )
+
+    print("\n========================================")
+    print("RESULTS")
+    print("========================================")
+
+    for i, result in enumerate(results):
+        print(f"Task {i}: {result}")
+
+    print("\n========================================")
+    print("CONCURRENCY TEST")
+    print("========================================")
+
+    print(
+        f"Maximum simultaneous executions: "
+        f"{ConcurrencyTool.max_active}"
+    )
+
+    print(
+        f"Total execution time: "
+        f"{total_time} seconds"
+    )
+
+
 asyncio.run(main())
