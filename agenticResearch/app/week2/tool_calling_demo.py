@@ -221,7 +221,7 @@ class WeatherTool(BaseTool):
 # ============================================================
 # 5. Test
 # ============================================================
-
+'''
 async def main():
 
     weather_tool = WeatherTool()
@@ -232,6 +232,129 @@ async def main():
 
     print(result)
     print(result.model_dump())
+
+
+asyncio.run(main())
+'''
+
+# ============================================================
+# 6. Test Tools
+# ============================================================
+
+class FailingTool(BaseTool):
+    name = "failing_tool"
+    description = "A tool that deliberately raises an exception."
+    args_schema = WeatherArgs
+
+    async def _execute(self, arguments: WeatherArgs):
+        raise RuntimeError("Something went wrong inside the tool")
+
+
+class SlowTool(BaseTool):
+    name = "slow_tool"
+    description = "A tool that deliberately exceeds the timeout."
+    args_schema = WeatherArgs
+
+    async def _execute(self, arguments: WeatherArgs):
+        await asyncio.sleep(15)
+        return "This should never be returned"
+
+
+class CrashTool(BaseTool):
+    name = "crash_tool"
+    description = "A tool that deliberately causes a different exception."
+    args_schema = WeatherArgs
+
+    async def _execute(self, arguments: WeatherArgs):
+        result = 10 / 0
+        return result
+
+
+# ============================================================
+# 7. Tests
+# ============================================================
+
+async def main():
+
+    weather_tool = WeatherTool()
+    failing_tool = FailingTool()
+    slow_tool = SlowTool()
+    crash_tool = CrashTool()
+
+    # --------------------------------------------------------
+    # TEST 1: Normal execution
+    # --------------------------------------------------------
+
+    print("\n========== TEST 1: SUCCESS ==========")
+
+    result = await weather_tool.run({
+        "city": "Chicago"
+    })
+
+    print(result)
+
+
+    # --------------------------------------------------------
+    # TEST 2: Missing required field
+    # --------------------------------------------------------
+
+    print("\n========== TEST 2: VALIDATION ERROR ==========")
+
+    result = await weather_tool.run({})
+
+    print(result)
+
+
+    # --------------------------------------------------------
+    # TEST 3: Unknown city
+    # --------------------------------------------------------
+
+    print("\n========== TEST 3: UNKNOWN CITY ==========")
+
+    result = await weather_tool.run({
+        "city": "Chennai"
+    })
+
+    print(result)
+
+
+    # --------------------------------------------------------
+    # TEST 4: Tool raises RuntimeError
+    # --------------------------------------------------------
+
+    print("\n========== TEST 4: TOOL EXCEPTION ==========")
+
+    result = await failing_tool.run({
+        "city": "Chicago"
+    })
+
+    print(result)
+
+
+    # --------------------------------------------------------
+    # TEST 5: Tool raises ZeroDivisionError
+    # --------------------------------------------------------
+
+    print("\n========== TEST 5: DIFFERENT EXCEPTION ==========")
+
+    result = await crash_tool.run({
+        "city": "Chicago"
+    })
+
+    print(result)
+
+
+    # --------------------------------------------------------
+    # TEST 6: Timeout
+    # --------------------------------------------------------
+
+    print("\n========== TEST 6: TIMEOUT ==========")
+
+    result = await slow_tool.run({
+        "city": "Chicago"
+    })
+
+    print(result)
 
 
 asyncio.run(main())
